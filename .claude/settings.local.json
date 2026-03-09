@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xcodebuild -project FocusBlur.xcodeproj -scheme FocusBlur -configuration Debug build)",
+      "Bash(swift -version)"
+    ]
+  }
+}
