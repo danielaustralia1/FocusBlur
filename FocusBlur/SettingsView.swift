@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// SwiftUI popover shown when the user clicks the menu bar icon.
 struct SettingsView: View {
