@@ -1,12 +1,11 @@
 import AppKit
 
-/// A borderless, transparent, click-through window that covers an entire screen.
-/// Hosts an OverlayView that provides blur + dim with a cutout for the active window.
+/// A borderless, transparent, click-through window that hosts an OverlayView.
+/// Used as one of four region windows that surround the active window.
 final class OverlayWindow: NSWindow {
-    convenience init(screen: NSScreen) {
-        // Use the designated initializer (without screen:), then configure
+    convenience init(rect: NSRect) {
         self.init(
-            contentRect: screen.frame,
+            contentRect: rect,
             styleMask: .borderless,
             backing: .buffered,
             defer: false
@@ -18,17 +17,15 @@ final class OverlayWindow: NSWindow {
         ignoresMouseEvents = true
         animationBehavior = .none
 
-        // Sit above normal windows but below floating panels.
-        // NSWindow.Level 3 = .floating(3) minus 1, so we're just below floating.
+        // Sit above normal windows but below floating panels
         level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue + 1)
 
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
-        let overlayView = OverlayView(frame: screen.frame)
+        let overlayView = OverlayView(frame: NSRect(origin: .zero, size: rect.size))
         contentView = overlayView
     }
 
-    /// Convenience accessor for the overlay content.
     var overlayView: OverlayView? {
         contentView as? OverlayView
     }
