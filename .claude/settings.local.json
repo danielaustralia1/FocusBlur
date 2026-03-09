@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(xcodebuild -project FocusBlur.xcodeproj -scheme FocusBlur -configuration Debug build)",
-      "Bash(swift -version)"
+      "Bash(swift -version)",
+      "Bash(git commit:*)",
+      "Bash(gh auth status)",
+      "Bash(brew install gh)",
+      "Bash(gh auth login --web -p https)",
+      "Bash(gh repo create FocusBlur --public --description \"Native macOS menu bar app that blurs and dims inactive windows to help you focus. Open-source alternative to Muffle.\" --source . --push)"
     ]
   }
 }
