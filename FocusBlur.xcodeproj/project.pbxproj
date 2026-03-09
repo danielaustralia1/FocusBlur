@@ -27,7 +27,6 @@
 		377A7D282F5EBD5B00137FF0 /* FocusBlur.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FocusBlur.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		377A7D372F5EBD5C00137FF0 /* FocusBlurTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FocusBlurTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		377A7D412F5EBD5C00137FF0 /* FocusBlurUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FocusBlurUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		377A7D632F5EBD8A00137FF0 /* FocusBlur.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = FocusBlur.xcodeproj; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -89,13 +88,6 @@
 				377A7D282F5EBD5B00137FF0 /* FocusBlur.app */,
 				377A7D372F5EBD5C00137FF0 /* FocusBlurTests.xctest */,
 				377A7D412F5EBD5C00137FF0 /* FocusBlurUITests.xctest */,
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		377A7D642F5EBD8A00137FF0 /* Products */ = {
-			isa = PBXGroup;
-			children = (
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -206,12 +198,6 @@
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 377A7D292F5EBD5B00137FF0 /* Products */;
 			projectDirPath = "";
-			projectReferences = (
-				{
-					ProductGroup = 377A7D642F5EBD8A00137FF0 /* Products */;
-					ProjectRef = 377A7D632F5EBD8A00137FF0 /* FocusBlur.xcodeproj */;
-				},
-			);
 			projectRoot = "";
 			targets = (
 				377A7D272F5EBD5B00137FF0 /* FocusBlur */,
