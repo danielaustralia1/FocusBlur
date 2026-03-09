@@ -11,9 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let prefs = Preferences.shared
 
-        // Prompt for Accessibility permissions immediately on first launch.
-        // The cutout (and blur/dim of only inactive windows) requires this.
-        WindowTracker.ensureAccessibility()
+        // Show a user-facing alert if Accessibility isn't enabled yet.
+        if !AXIsProcessTrusted() {
+            showAccessibilityPrompt()
+        }
 
         overlayManager = OverlayManager()
         windowTracker = WindowTracker()
@@ -79,5 +80,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlayManager?.hideOverlays()
         windowTracker?.stop()
         shakeDetector?.stop()
+    }
+
+    // MARK: - Accessibility prompt
+
+    /// Shows a native alert explaining why Accessibility is needed,
+    /// with a button that opens System Settings directly to the right pane.
+    private func showAccessibilityPrompt() {
+        let alert = NSAlert()
+        alert.messageText = "FocusBlur Needs Accessibility Access"
+        alert.informativeText = "To track the active window and only blur inactive ones, FocusBlur needs Accessibility permissions.\n\nClick \"Open System Settings\" and toggle FocusBlur on. It will start working automatically — no restart needed."
+        alert.alertStyle = .informational
+        alert.icon = NSImage(systemSymbolName: "lock.shield", accessibilityDescription: nil)
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            // Deep-link straight to Privacy → Accessibility
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 }
