@@ -23,6 +23,7 @@ final class OverlayView: NSView {
 
     private func setup() {
         wantsLayer = true
+        layer?.isOpaque = false
 
         // --- Blur: NSVisualEffectView blurs everything behind this window ---
         blurView.material = .fullScreenUI
@@ -30,9 +31,6 @@ final class OverlayView: NSView {
         blurView.state = .active
         blurView.frame = bounds
         blurView.autoresizingMask = [.width, .height]
-        // Map blur radius (0–30) to alpha (0–1); at alpha 0 the blur is invisible,
-        // at alpha 1 it's full strength. This isn't true radius control but gives
-        // a smooth perceptual range from "no blur" to "heavy blur".
         blurView.alphaValue = CGFloat(Preferences.shared.blurRadius / 30.0)
         addSubview(blurView)
 
@@ -66,7 +64,6 @@ final class OverlayView: NSView {
 
     // MARK: - Coordinate conversion
 
-    /// Convert the screen-coordinate cutout to this view's local coordinate system.
     private func localCutoutRect() -> NSRect {
         guard cutoutRect != .zero else { return .zero }
         let origin = window?.frame.origin ?? .zero
@@ -80,7 +77,7 @@ final class OverlayView: NSView {
 
     // MARK: - Blur mask
 
-    /// NSVisualEffectView.maskImage: white = show blur, clear = no blur (window shows through).
+    /// NSVisualEffectView.maskImage: opaque = show blur, clear = no blur.
     private func updateBlurMask(_ localRect: NSRect) {
         guard localRect != .zero else {
             blurView.maskImage = nil  // No cutout → blur everywhere
@@ -90,10 +87,9 @@ final class OverlayView: NSView {
         guard size.width > 0, size.height > 0 else { return }
 
         let image = NSImage(size: size, flipped: false) { rect in
-            // Fill with white (opaque) — blur is visible everywhere
             NSColor.white.setFill()
             rect.fill()
-            // Punch a hole — .copy compositing replaces with clear
+            // Punch a transparent hole using .copy compositing
             NSColor.clear.setFill()
             localRect.fill(using: .copy)
             return true
@@ -112,6 +108,7 @@ final class OverlayView: NSView {
 // MARK: - DimView
 
 /// Draws a semi-transparent black overlay with a rectangular cutout cleared to transparent.
+/// Uses NSCompositingOperation.copy to punch a true transparent hole in the dim layer.
 private final class DimView: NSView {
     var dimOpacity: Double = 0.4 {
         didSet { needsDisplay = true }
@@ -123,23 +120,27 @@ private final class DimView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
     }
 
+    override var isOpaque: Bool { false }
+
     override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-
         // Fill the entire view with semi-transparent black
-        ctx.setFillColor(NSColor.black.withAlphaComponent(dimOpacity).cgColor)
-        ctx.fill(bounds)
+        NSColor.black.withAlphaComponent(dimOpacity).setFill()
+        bounds.fill()
 
-        // Clear the cutout area so the active window shows through undimmed
+        // Punch a transparent hole for the active window.
+        // .copy compositing replaces whatever is there with clear (transparent).
         if cutoutRect != .zero {
-            ctx.clear(cutoutRect)
+            NSColor.clear.setFill()
+            cutoutRect.fill(using: .copy)
         }
     }
 }
