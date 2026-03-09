@@ -14,9 +14,25 @@ final class WindowTracker {
     private var currentElement: AXUIElement?
     private var lastFrame: CGRect = .zero
 
+    // MARK: - Accessibility permission
+
+    /// Check (and optionally prompt) for Accessibility trust.
+    /// Returns true if already trusted. If not, macOS shows the
+    /// "allow Accessibility" dialog and returns false.
+    @discardableResult
+    static func ensureAccessibility() -> Bool {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
     // MARK: - Start / Stop
 
     func start() {
+        // Prompt for accessibility if not yet granted
+        if !WindowTracker.ensureAccessibility() {
+            print("[FocusBlur] Accessibility not granted — window tracking won't work until enabled in System Settings.")
+        }
+
         // Observe app activation changes
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -47,6 +63,7 @@ final class WindowTracker {
         pollTimer?.invalidate()
         pollTimer = nil
         removeAXObserver()
+        lastFrame = .zero
     }
 
     // MARK: - Accessibility tracking
@@ -64,11 +81,22 @@ final class WindowTracker {
         // Get the focused window
         var windowValue: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue)
-        guard result == .success, let window = windowValue else {
+
+        guard result == .success else {
+            if result == .apiDisabled {
+                print("[FocusBlur] Accessibility API disabled — grant access in System Settings → Privacy & Security → Accessibility.")
+            }
             // App may not have a window (e.g. Finder desktop); clear cutout
             onActiveWindowChanged?(.zero)
             return
         }
+
+        guard let window = windowValue else {
+            onActiveWindowChanged?(.zero)
+            return
+        }
+
+        // Safe cast — AXUIElementCopyAttributeValue returns an AXUIElement for window attributes
         currentElement = (window as! AXUIElement)
 
         setupAXObserver(pid: pid, element: currentElement!)
@@ -117,14 +145,17 @@ final class WindowTracker {
 
         var position = CGPoint.zero
         var size = CGSize.zero
-        AXValueGetValue(posValue as! AXValue, .cgPoint, &position)
-        AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+        guard AXValueGetValue(posValue as! AXValue, .cgPoint, &position),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+        else { return }
 
-        // AX coordinates have origin at top-left; convert to Cocoa's bottom-left origin
-        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        // AX coordinates: origin at top-left of primary screen.
+        // Cocoa coordinates: origin at bottom-left of primary screen.
+        // Primary screen is always NSScreen.screens[0].
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let frame = CGRect(
             x: position.x,
-            y: screenHeight - position.y - size.height,
+            y: primaryHeight - position.y - size.height,
             width: size.width,
             height: size.height
         )

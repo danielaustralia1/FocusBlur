@@ -11,6 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let prefs = Preferences.shared
 
+        // Prompt for Accessibility permissions immediately on first launch.
+        // The cutout (and blur/dim of only inactive windows) requires this.
+        WindowTracker.ensureAccessibility()
+
         overlayManager = OverlayManager()
         windowTracker = WindowTracker()
         shakeDetector = ShakeDetector()

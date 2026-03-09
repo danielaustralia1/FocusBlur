@@ -1,94 +1,145 @@
 import AppKit
 import QuartzCore
 
-/// Full-screen view that applies a GPU-composited Gaussian blur and semi-transparent
-/// dim to everything behind it, with a rectangular cutout for the active window.
+/// Full-screen view that applies blur + dim to everything behind it,
+/// with a rectangular cutout that lets the active window show through.
+///
+/// Blur uses NSVisualEffectView (reliable, GPU-composited by WindowServer).
+/// Dim uses a separate view drawing semi-transparent black with a cleared cutout.
 final class OverlayView: NSView {
+    private let blurView = NSVisualEffectView()
+    private let dimView = DimView()
     private var cutoutRect: NSRect = .zero
-    private let maskLayer = CAShapeLayer()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        setupLayer()
+        setup()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        setupLayer()
+        setup()
     }
 
-    private func setupLayer() {
+    private func setup() {
         wantsLayer = true
-        guard let layer = self.layer else { return }
 
-        // GPU-accelerated background blur via CIGaussianBlur
-        if let blurFilter = CIFilter(name: "CIGaussianBlur") {
-            blurFilter.setDefaults()
-            blurFilter.setValue(Preferences.shared.blurRadius, forKey: kCIInputRadiusKey)
-            layer.backgroundFilters = [blurFilter]
-        }
+        // --- Blur: NSVisualEffectView blurs everything behind this window ---
+        blurView.material = .fullScreenUI
+        blurView.blendingMode = .behindWindow
+        blurView.state = .active
+        blurView.frame = bounds
+        blurView.autoresizingMask = [.width, .height]
+        // Map blur radius (0–30) to alpha (0–1); at alpha 0 the blur is invisible,
+        // at alpha 1 it's full strength. This isn't true radius control but gives
+        // a smooth perceptual range from "no blur" to "heavy blur".
+        blurView.alphaValue = CGFloat(Preferences.shared.blurRadius / 30.0)
+        addSubview(blurView)
 
-        // Semi-transparent black for the dim effect
-        let opacity = Preferences.shared.dimOpacity
-        layer.backgroundColor = NSColor.black.withAlphaComponent(opacity).cgColor
-
-        // Mask layer: filled everywhere except the cutout
-        maskLayer.fillRule = .evenOdd
-        layer.mask = maskLayer
-        updateMask()
+        // --- Dim: semi-transparent black overlay, drawn with a cutout hole ---
+        dimView.frame = bounds
+        dimView.autoresizingMask = [.width, .height]
+        dimView.dimOpacity = Preferences.shared.dimOpacity
+        addSubview(dimView)
     }
 
     // MARK: - Public API
 
-    /// Set the blur filter radius (0–30).
+    /// Set blur intensity. Slider range 0–30 is mapped to NSVisualEffectView alpha 0–1.
     func setBlurRadius(_ radius: Double) {
-        guard let layer = self.layer,
-              let filters = layer.backgroundFilters as? [CIFilter],
-              let blur = filters.first else { return }
-        blur.setValue(radius, forKey: kCIInputRadiusKey)
-        // Reassign to trigger compositing update
-        layer.backgroundFilters = [blur]
+        blurView.alphaValue = CGFloat(max(min(radius / 30.0, 1.0), 0.0))
     }
 
-    /// Set the dim overlay opacity (0.0–1.0).
+    /// Set dim overlay opacity (0.0–1.0).
     func setDimOpacity(_ opacity: Double) {
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(opacity).cgColor
+        dimView.dimOpacity = opacity
     }
 
     /// Update the active-window cutout rectangle (in screen coordinates).
     /// Pass `.zero` to remove the cutout (blur/dim the entire screen).
     func setCutout(_ rect: NSRect) {
         cutoutRect = rect
-        updateMask()
+        let local = localCutoutRect()
+        updateBlurMask(local)
+        dimView.cutoutRect = local
     }
 
-    // MARK: - Mask
+    // MARK: - Coordinate conversion
 
-    private func updateMask() {
-        let fullPath = CGMutablePath()
-        fullPath.addRect(bounds)
+    /// Convert the screen-coordinate cutout to this view's local coordinate system.
+    private func localCutoutRect() -> NSRect {
+        guard cutoutRect != .zero else { return .zero }
+        let origin = window?.frame.origin ?? .zero
+        return NSRect(
+            x: cutoutRect.origin.x - origin.x,
+            y: cutoutRect.origin.y - origin.y,
+            width: cutoutRect.width,
+            height: cutoutRect.height
+        )
+    }
 
-        if cutoutRect != .zero {
-            // Convert screen coordinates to this view's coordinate system.
-            // Screen origin is bottom-left; the window's frame matches the screen,
-            // so we offset by the window's origin.
-            let windowOrigin = window?.frame.origin ?? .zero
-            let localRect = NSRect(
-                x: cutoutRect.origin.x - windowOrigin.x,
-                y: cutoutRect.origin.y - windowOrigin.y,
-                width: cutoutRect.width,
-                height: cutoutRect.height
-            )
-            fullPath.addRect(localRect)
+    // MARK: - Blur mask
+
+    /// NSVisualEffectView.maskImage: white = show blur, clear = no blur (window shows through).
+    private func updateBlurMask(_ localRect: NSRect) {
+        guard localRect != .zero else {
+            blurView.maskImage = nil  // No cutout → blur everywhere
+            return
         }
+        let size = bounds.size
+        guard size.width > 0, size.height > 0 else { return }
 
-        maskLayer.path = fullPath
-        maskLayer.frame = bounds
+        let image = NSImage(size: size, flipped: false) { rect in
+            // Fill with white (opaque) — blur is visible everywhere
+            NSColor.white.setFill()
+            rect.fill()
+            // Punch a hole — .copy compositing replaces with clear
+            NSColor.clear.setFill()
+            localRect.fill(using: .copy)
+            return true
+        }
+        blurView.maskImage = image
     }
 
     override func layout() {
         super.layout()
-        maskLayer.frame = bounds
-        updateMask()
+        let local = localCutoutRect()
+        updateBlurMask(local)
+        dimView.cutoutRect = local
+    }
+}
+
+// MARK: - DimView
+
+/// Draws a semi-transparent black overlay with a rectangular cutout cleared to transparent.
+private final class DimView: NSView {
+    var dimOpacity: Double = 0.4 {
+        didSet { needsDisplay = true }
+    }
+    var cutoutRect: NSRect = .zero {
+        didSet { needsDisplay = true }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+
+        // Fill the entire view with semi-transparent black
+        ctx.setFillColor(NSColor.black.withAlphaComponent(dimOpacity).cgColor)
+        ctx.fill(bounds)
+
+        // Clear the cutout area so the active window shows through undimmed
+        if cutoutRect != .zero {
+            ctx.clear(cutoutRect)
+        }
     }
 }

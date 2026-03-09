@@ -2,6 +2,9 @@ import AppKit
 
 /// Detects rapid horizontal mouse "shaking" (3+ direction reversals within 0.5s
 /// covering sufficient distance) and fires `onShakeDetected`.
+///
+/// Includes a 1.5-second cooldown after each detection to prevent the tail end
+/// of the shake gesture from immediately re-triggering.
 final class ShakeDetector {
     var onShakeDetected: (() -> Void)?
 
@@ -11,6 +14,8 @@ final class ShakeDetector {
     private let timeWindow: TimeInterval = 0.5
     private let minReversals = 3
     private let minTotalDistance: CGFloat = 200
+    private let cooldown: TimeInterval = 1.5
+    private var lastShakeTime: TimeInterval = 0
 
     func start() {
         guard monitor == nil else { return }
@@ -29,6 +34,11 @@ final class ShakeDetector {
 
     private func handleMouseMove(_ event: NSEvent) {
         let now = ProcessInfo.processInfo.systemUptime
+
+        // Ignore mouse events during cooldown — the tail end of a shake
+        // would otherwise immediately re-trigger detection.
+        if now - lastShakeTime < cooldown { return }
+
         let x = event.locationInWindow.x
 
         samples.append((x: x, time: now))
@@ -59,6 +69,7 @@ final class ShakeDetector {
         }
 
         if reversals >= minReversals && totalDistance >= minTotalDistance {
+            lastShakeTime = now
             samples.removeAll()
             onShakeDetected?()
         }
