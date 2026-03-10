@@ -6,6 +6,8 @@ A native macOS menu bar app that blurs and dims everything except the active win
 
 Free, open-source alternative to [Muffle](https://www.getmuffle.com/).
 
+![Screenshoot of app in menu bar:](https://github.com/danielaustralia1/FocusBlur/blob/main/Screenshot.jpg)
+
 ## Features
 
 - **Blur inactive windows** — GPU-accelerated Gaussian blur (adjustable 0–30)
