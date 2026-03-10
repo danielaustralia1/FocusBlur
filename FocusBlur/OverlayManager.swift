@@ -1,25 +1,16 @@
 import AppKit
 
-/// Manages four overlay windows positioned around the active window:
+/// Manages one fullscreen overlay window per display.
 ///
-///     +------------------------------+
-///     |            TOP               |
-///     +------+---------------+-------+
-///     |      |               |       |
-///     | LEFT | Active Window | RIGHT |
-///     |      |   (no overlay)|       |
-///     +------+---------------+-------+
-///     |           BOTTOM             |
-///     +------------------------------+
+/// The key trick: instead of masking or cutting holes, the overlay window
+/// is z-ordered just BELOW the active window using `order(.below, relativeTo:)`.
+/// This means:
+///   - The active window sits on top of the overlay → unaffected
+///   - All inactive windows sit below the overlay → blurred + dimmed
 ///
-/// The active window is never covered — no masking needed.
-/// Each overlay window independently blurs and dims its region.
+/// This is the same approach used by HazeOver and similar apps.
 final class OverlayManager {
-    private var topWindow: OverlayWindow?
-    private var bottomWindow: OverlayWindow?
-    private var leftWindow: OverlayWindow?
-    private var rightWindow: OverlayWindow?
-
+    private var overlayWindows: [OverlayWindow] = []
     private var screenObserver: NSObjectProtocol?
     private var isVisible = false
 
@@ -30,10 +21,16 @@ final class OverlayManager {
             queue: .main
         ) { [weak self] _ in
             guard let self, self.isVisible else { return }
+            let lastWindowID = self.lastOrderedBelowID
             self.tearDown()
             self.showOverlays()
+            if lastWindowID != 0 {
+                self.orderBelow(windowID: lastWindowID)
+            }
         }
     }
+
+    private var lastOrderedBelowID: CGWindowID = 0
 
     deinit {
         if let observer = screenObserver {
@@ -46,124 +43,56 @@ final class OverlayManager {
 
     func showOverlays() {
         isVisible = true
-        if topWindow == nil { createWindows() }
-        // Start covering everything; updateCutout will carve out the active window
-        updateCutout(.zero)
-        for w in allWindows { w.orderFrontRegardless() }
+        if overlayWindows.isEmpty { createOverlays() }
+        for window in overlayWindows {
+            window.orderFrontRegardless()
+        }
     }
 
     func hideOverlays() {
         isVisible = false
-        for w in allWindows { w.orderOut(nil) }
-    }
-
-    // MARK: - Update
-
-    /// Reposition the four overlay windows around the active window's frame.
-    /// Pass `.zero` when there's no active window (covers everything).
-    func updateCutout(_ activeFrame: CGRect) {
-        guard isVisible else { return }
-        let bounds = totalBounds()
-
-        // No active window or accessibility not working → cover everything
-        if activeFrame == .zero || activeFrame.isEmpty {
-            applyFrame(topWindow, frame: bounds)
-            applyFrame(bottomWindow, frame: .zero)
-            applyFrame(leftWindow, frame: .zero)
-            applyFrame(rightWindow, frame: .zero)
-            return
-        }
-
-        // Clamp the active window rect to the total screen area
-        let cutout = activeFrame.intersection(bounds)
-        guard !cutout.isNull, !cutout.isEmpty else {
-            applyFrame(topWindow, frame: bounds)
-            applyFrame(bottomWindow, frame: .zero)
-            applyFrame(leftWindow, frame: .zero)
-            applyFrame(rightWindow, frame: .zero)
-            return
-        }
-
-        // Top: full width, from the top of the active window to the top of all screens
-        let top = CGRect(
-            x: bounds.minX,
-            y: cutout.maxY,
-            width: bounds.width,
-            height: bounds.maxY - cutout.maxY
-        )
-
-        // Bottom: full width, from the bottom of all screens to the bottom of the active window
-        let bottom = CGRect(
-            x: bounds.minX,
-            y: bounds.minY,
-            width: bounds.width,
-            height: cutout.minY - bounds.minY
-        )
-
-        // Left: between top and bottom, from left edge of screens to active window left
-        let left = CGRect(
-            x: bounds.minX,
-            y: cutout.minY,
-            width: cutout.minX - bounds.minX,
-            height: cutout.height
-        )
-
-        // Right: between top and bottom, from active window right to right edge of screens
-        let right = CGRect(
-            x: cutout.maxX,
-            y: cutout.minY,
-            width: bounds.maxX - cutout.maxX,
-            height: cutout.height
-        )
-
-        applyFrame(topWindow, frame: top)
-        applyFrame(bottomWindow, frame: bottom)
-        applyFrame(leftWindow, frame: left)
-        applyFrame(rightWindow, frame: right)
-    }
-
-    func updateBlur(_ radius: Double) {
-        for w in allWindows { w.overlayView?.setBlurRadius(radius) }
-    }
-
-    func updateDim(_ opacity: Double) {
-        for w in allWindows { w.overlayView?.setDimOpacity(opacity) }
-    }
-
-    // MARK: - Private
-
-    /// Union of all connected screens.
-    private func totalBounds() -> CGRect {
-        NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }
-    }
-
-    private func createWindows() {
-        let b = totalBounds()
-        topWindow = OverlayWindow(rect: b)
-        bottomWindow = OverlayWindow(rect: b)
-        leftWindow = OverlayWindow(rect: b)
-        rightWindow = OverlayWindow(rect: b)
-    }
-
-    private func applyFrame(_ window: OverlayWindow?, frame: CGRect) {
-        guard let window else { return }
-        if frame.width >= 1 && frame.height >= 1 {
-            window.setFrame(frame, display: true)
-            if !window.isVisible { window.orderFrontRegardless() }
-        } else {
+        for window in overlayWindows {
             window.orderOut(nil)
         }
     }
 
-    private var allWindows: [OverlayWindow] {
-        [topWindow, bottomWindow, leftWindow, rightWindow].compactMap { $0 }
+    // MARK: - Z-order positioning
+
+    /// Position all overlay windows just below the given window ID.
+    /// The active window stays on top; everything else is behind the overlay.
+    func orderBelow(windowID: CGWindowID) {
+        guard isVisible, windowID != 0 else { return }
+        lastOrderedBelowID = windowID
+
+        let windowNumber = Int(windowID)
+        for window in overlayWindows {
+            window.order(.below, relativeTo: windowNumber)
+        }
+    }
+
+    // MARK: - Update blur / dim
+
+    func updateBlur(_ radius: Double) {
+        for w in overlayWindows { w.overlayView?.setBlurRadius(radius) }
+    }
+
+    func updateDim(_ opacity: Double) {
+        for w in overlayWindows { w.overlayView?.setDimOpacity(opacity) }
+    }
+
+    // MARK: - Private
+
+    private func createOverlays() {
+        for screen in NSScreen.screens {
+            let overlay = OverlayWindow(screen: screen)
+            overlayWindows.append(overlay)
+        }
     }
 
     private func tearDown() {
-        for w in allWindows { w.orderOut(nil) }
-        topWindow = nil
-        bottomWindow = nil
-        leftWindow = nil
-        rightWindow = nil
+        for window in overlayWindows {
+            window.orderOut(nil)
+        }
+        overlayWindows.removeAll()
     }
 }

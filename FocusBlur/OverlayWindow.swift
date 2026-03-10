@@ -1,11 +1,11 @@
 import AppKit
 
-/// A borderless, transparent, click-through window that hosts an OverlayView.
-/// Used as one of four region windows that surround the active window.
+/// A borderless, transparent, click-through fullscreen overlay window.
+/// Positioned just below the active window in z-order using order(.below, relativeTo:).
 final class OverlayWindow: NSWindow {
-    convenience init(rect: NSRect) {
+    convenience init(screen: NSScreen) {
         self.init(
-            contentRect: rect,
+            contentRect: screen.frame,
             styleMask: .borderless,
             backing: .buffered,
             defer: false
@@ -17,14 +17,19 @@ final class OverlayWindow: NSWindow {
         ignoresMouseEvents = true
         animationBehavior = .none
 
-        // Sit above normal windows but below floating panels
-        level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue + 1)
+        // Normal level — same as other windows. We control visibility by
+        // z-ordering this window just below the active window.
+        level = .normal
 
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
-        let overlayView = OverlayView(frame: NSRect(origin: .zero, size: rect.size))
+        let overlayView = OverlayView(frame: NSRect(origin: .zero, size: screen.frame.size))
         contentView = overlayView
     }
+
+    // Prevent this window from ever becoming key or main
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
 
     var overlayView: OverlayView? {
         contentView as? OverlayView

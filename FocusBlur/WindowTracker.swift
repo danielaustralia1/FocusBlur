@@ -1,14 +1,22 @@
 import AppKit
 import ApplicationServices
 
-/// Tracks the frontmost window's position and size using the Accessibility API.
-/// Fires `onActiveWindowChanged` whenever the active window moves, resizes,
-/// or a different window is activated.
+// Private AX function to extract the CGWindowID from an AXUIElement.
+// This is the standard way apps like HazeOver, AltTab, etc. get the
+// window number needed for z-order manipulation.
+@_silgen_name("_AXUIElementGetWindow")
+func _AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
+
+/// Tracks the frontmost window and provides its CGWindowID so the overlay
+/// can be ordered just below it in the z-order.
 ///
-/// If Accessibility permissions aren't yet granted, retries every 2 seconds
-/// until they are — no app restart needed.
+/// Fires `onFocusedWindowChanged` with the window's CGWindowID whenever
+/// the active window changes or .zero if no window is focused.
+///
+/// Retries every 2 seconds if Accessibility isn't yet granted.
 final class WindowTracker {
-    var onActiveWindowChanged: ((CGRect) -> Void)?
+    /// Called with the CGWindowID of the focused window (or 0 if none).
+    var onFocusedWindowChanged: ((CGWindowID) -> Void)?
 
     private var workspaceObserver: NSObjectProtocol?
     private var pollTimer: Timer?
@@ -16,12 +24,11 @@ final class WindowTracker {
     private var axObserver: AXObserver?
     private var currentApp: NSRunningApplication?
     private var currentElement: AXUIElement?
-    private var lastFrame: CGRect = .zero
+    private var lastWindowID: CGWindowID = 0
     private var isAccessibilityTrusted = false
 
     // MARK: - Accessibility permission
 
-    /// Check (and optionally prompt) for Accessibility trust.
     @discardableResult
     static func ensureAccessibility() -> Bool {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
@@ -31,7 +38,6 @@ final class WindowTracker {
     // MARK: - Start / Stop
 
     func start() {
-        // Prompt for accessibility
         WindowTracker.ensureAccessibility()
         isAccessibilityTrusted = AXIsProcessTrusted()
 
@@ -39,8 +45,7 @@ final class WindowTracker {
             print("[FocusBlur] ✅ Accessibility trusted — window tracking active.")
             beginTracking()
         } else {
-            print("[FocusBlur] ⏳ Waiting for Accessibility permission… (grant in System Settings → Privacy & Security → Accessibility)")
-            // Poll every 2s until the user grants permission — no restart needed.
+            print("[FocusBlur] ⏳ Waiting for Accessibility permission…")
             accessibilityRetryTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
                 guard let self else { timer.invalidate(); return }
                 if AXIsProcessTrusted() {
@@ -64,13 +69,12 @@ final class WindowTracker {
         pollTimer?.invalidate()
         pollTimer = nil
         removeAXObserver()
-        lastFrame = .zero
+        lastWindowID = 0
     }
 
-    // MARK: - Internal setup
+    // MARK: - Internal
 
     private func beginTracking() {
-        // Observe app activation changes
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
@@ -80,21 +84,17 @@ final class WindowTracker {
             self?.trackApp(app)
         }
 
-        // Track the currently active app right away
         if let frontApp = NSWorkspace.shared.frontmostApplication {
             trackApp(frontApp)
         }
 
-        // Light poll as a safety net for missed AX notifications (e.g. window drag).
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            self?.refreshActiveWindowFrame()
+        // Poll to catch window changes AX notifications might miss (e.g. tab switches)
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            self?.refreshFocusedWindow()
         }
     }
 
-    // MARK: - Accessibility tracking
-
     private func trackApp(_ app: NSRunningApplication) {
-        // Skip our own app — when our popover activates, keep showing the last cutout
         if app.bundleIdentifier == Bundle.main.bundleIdentifier { return }
 
         currentApp = app
@@ -103,28 +103,21 @@ final class WindowTracker {
         let pid = app.processIdentifier
         let appElement = AXUIElementCreateApplication(pid)
 
-        // Get the focused window
         var windowValue: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue)
 
         guard result == .success, let window = windowValue else {
             if result == .apiDisabled {
-                print("[FocusBlur] ❌ AX API disabled for \(app.localizedName ?? "unknown"). Is Accessibility granted?")
-            } else if result == .noValue {
-                // App has no focused window (e.g. Finder desktop) — clear cutout
-                print("[FocusBlur] App '\(app.localizedName ?? "?")' has no focused window, clearing cutout.")
-            } else {
-                print("[FocusBlur] ❌ AX query failed for '\(app.localizedName ?? "?")': error \(result.rawValue)")
+                print("[FocusBlur] ❌ AX API disabled for \(app.localizedName ?? "unknown")")
             }
-            onActiveWindowChanged?(.zero)
+            onFocusedWindowChanged?(0)
             return
         }
 
         currentElement = (window as! AXUIElement)
-        print("[FocusBlur] Tracking window for '\(app.localizedName ?? "?")'")
 
         setupAXObserver(pid: pid, element: currentElement!)
-        refreshActiveWindowFrame()
+        refreshFocusedWindow()
     }
 
     private func setupAXObserver(pid: pid_t, element: AXUIElement) {
@@ -133,7 +126,7 @@ final class WindowTracker {
             guard let refcon else { return }
             let tracker = Unmanaged<WindowTracker>.fromOpaque(refcon).takeUnretainedValue()
             DispatchQueue.main.async {
-                tracker.refreshActiveWindowFrame()
+                tracker.refreshFocusedWindow()
             }
         }
 
@@ -156,37 +149,30 @@ final class WindowTracker {
         currentElement = nil
     }
 
-    // MARK: - Frame reading
+    // MARK: - Window ID extraction
 
-    private func refreshActiveWindowFrame() {
+    private func refreshFocusedWindow() {
+        // If the current element is stale (app switched), re-query
+        if let app = currentApp {
+            let appElement = AXUIElementCreateApplication(app.processIdentifier)
+            var windowValue: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue) == .success,
+               let window = windowValue {
+                currentElement = (window as! AXUIElement)
+            }
+        }
+
         guard let element = currentElement else { return }
 
-        var posValue: CFTypeRef?
-        var sizeValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posValue) == .success,
-              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success
-        else { return }
+        var windowID: CGWindowID = 0
+        let err = _AXUIElementGetWindow(element, &windowID)
 
-        var position = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(posValue as! AXValue, .cgPoint, &position),
-              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
-        else { return }
+        guard err == .success, windowID != 0 else { return }
 
-        // AX coordinates: origin at top-left of primary screen.
-        // Cocoa coordinates: origin at bottom-left of primary screen.
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let frame = CGRect(
-            x: position.x,
-            y: primaryHeight - position.y - size.height,
-            width: size.width,
-            height: size.height
-        )
-
-        if frame != lastFrame {
-            lastFrame = frame
-            print("[FocusBlur] Cutout → x:\(Int(frame.origin.x)) y:\(Int(frame.origin.y)) w:\(Int(frame.width)) h:\(Int(frame.height))")
-            onActiveWindowChanged?(frame)
+        if windowID != lastWindowID {
+            lastWindowID = windowID
+            print("[FocusBlur] Focused window ID: \(windowID) (\(currentApp?.localizedName ?? "?"))")
+            onFocusedWindowChanged?(windowID)
         }
     }
 }

@@ -11,7 +11,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let prefs = Preferences.shared
 
-        // Show a user-facing alert if Accessibility isn't enabled yet.
         if !AXIsProcessTrusted() {
             showAccessibilityPrompt()
         }
@@ -21,12 +20,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shakeDetector = ShakeDetector()
         statusBarController = StatusBarController()
 
-        // Feed active-window frame changes into the overlay manager
-        windowTracker?.onActiveWindowChanged = { [weak self] frame in
-            self?.overlayManager?.updateCutout(frame)
+        // When the focused window changes, re-order overlays just below it
+        windowTracker?.onFocusedWindowChanged = { [weak self] windowID in
+            self?.overlayManager?.orderBelow(windowID: windowID)
         }
 
-        // React to preference changes
         prefs.$isEnabled
             .sink { [weak self] enabled in
                 if enabled {
@@ -61,12 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        // Shake toggles the main enable switch
         shakeDetector?.onShakeDetected = {
             prefs.isEnabled.toggle()
         }
 
-        // Kick things off
         if prefs.isEnabled {
             overlayManager?.showOverlays()
             windowTracker?.start()
@@ -84,8 +80,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Accessibility prompt
 
-    /// Shows a native alert explaining why Accessibility is needed,
-    /// with a button that opens System Settings directly to the right pane.
     private func showAccessibilityPrompt() {
         let alert = NSAlert()
         alert.messageText = "FocusBlur Needs Accessibility Access"
@@ -97,7 +91,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            // Deep-link straight to Privacy → Accessibility
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                 NSWorkspace.shared.open(url)
             }
