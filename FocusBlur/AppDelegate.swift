@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var overlayManager: OverlayManager?
     private var windowTracker: WindowTracker?
     private var shakeDetector: ShakeDetector?
+    private var hotkeyManager: HotkeyManager?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -18,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlayManager = OverlayManager()
         windowTracker = WindowTracker()
         shakeDetector = ShakeDetector()
+        hotkeyManager = HotkeyManager()
         statusBarController = StatusBarController()
 
         // When the focused window changes, re-order overlays just below it
@@ -63,6 +65,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             prefs.isEnabled.toggle()
         }
 
+        // Sync shake sensitivity
+        shakeDetector?.sensitivity = prefs.shakeSensitivity
+        prefs.$shakeSensitivity
+            .sink { [weak self] sensitivity in
+                self?.shakeDetector?.sensitivity = sensitivity
+            }
+            .store(in: &cancellables)
+
+        // Global hotkey
+        hotkeyManager?.onHotkeyPressed = {
+            prefs.isEnabled.toggle()
+        }
+
+        prefs.$hotkeyEnabled
+            .sink { [weak self] enabled in
+                if enabled {
+                    self?.hotkeyManager?.start()
+                } else {
+                    self?.hotkeyManager?.stop()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Re-bind hotkey when user changes the shortcut
+        prefs.$hotkeyKeyCode
+            .combineLatest(prefs.$hotkeyModifiers)
+            .dropFirst() // skip initial value
+            .sink { [weak self] keyCode, modifiers in
+                self?.hotkeyManager?.updateHotkey(
+                    keyCode: UInt16(keyCode),
+                    modifiers: NSEvent.ModifierFlags(rawValue: UInt(modifiers))
+                )
+            }
+            .store(in: &cancellables)
+
         if prefs.isEnabled {
             overlayManager?.showOverlays()
             windowTracker?.start()
@@ -70,12 +107,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if prefs.shakeToToggle {
             shakeDetector?.start()
         }
+        if prefs.hotkeyEnabled {
+            hotkeyManager?.start()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         overlayManager?.hideOverlays()
         windowTracker?.stop()
         shakeDetector?.stop()
+        hotkeyManager?.stop()
     }
 
     // MARK: - Accessibility prompt

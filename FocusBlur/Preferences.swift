@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import Carbon.HIToolbox
 import Combine
 
 /// Central settings store backed by UserDefaults.
@@ -11,6 +12,11 @@ final class Preferences: ObservableObject {
         static let blurRadius = "blurRadius"
         static let dimOpacity = "dimOpacity"
         static let shakeToToggle = "shakeToToggle"
+        static let shakeSensitivity = "shakeSensitivity"
+        static let hotkeyEnabled = "hotkeyEnabled"
+        static let hotkeyKeyCode = "hotkeyKeyCode"
+        static let hotkeyModifiers = "hotkeyModifiers"
+        static let hotkeyCharacter = "hotkeyCharacter"
         static let launchAtLogin = "launchAtLogin"
     }
 
@@ -31,6 +37,39 @@ final class Preferences: ObservableObject {
         didSet { UserDefaults.standard.set(shakeToToggle, forKey: Keys.shakeToToggle) }
     }
 
+    /// Shake sensitivity: 1.0 = low (hard to trigger), 2.0 = medium, 3.0 = high (easy to trigger)
+    @Published var shakeSensitivity: Double {
+        didSet { UserDefaults.standard.set(shakeSensitivity, forKey: Keys.shakeSensitivity) }
+    }
+
+    @Published var hotkeyEnabled: Bool {
+        didSet { UserDefaults.standard.set(hotkeyEnabled, forKey: Keys.hotkeyEnabled) }
+    }
+
+    @Published var hotkeyKeyCode: Int {
+        didSet { UserDefaults.standard.set(hotkeyKeyCode, forKey: Keys.hotkeyKeyCode) }
+    }
+
+    @Published var hotkeyModifiers: Int {
+        didSet { UserDefaults.standard.set(hotkeyModifiers, forKey: Keys.hotkeyModifiers) }
+    }
+
+    @Published var hotkeyCharacter: String {
+        didSet { UserDefaults.standard.set(hotkeyCharacter, forKey: Keys.hotkeyCharacter) }
+    }
+
+    /// Human-readable label for the current hotkey (e.g. "⌘⇧D").
+    var hotkeyLabel: String {
+        var label = ""
+        let mods = NSEvent.ModifierFlags(rawValue: UInt(hotkeyModifiers))
+        if mods.contains(.control) { label += "⌃" }
+        if mods.contains(.option)  { label += "⌥" }
+        if mods.contains(.shift)   { label += "⇧" }
+        if mods.contains(.command) { label += "⌘" }
+        label += hotkeyCharacter.uppercased()
+        return label
+    }
+
     @Published var launchAtLogin: Bool {
         didSet { UserDefaults.standard.set(launchAtLogin, forKey: Keys.launchAtLogin) }
     }
@@ -43,7 +82,12 @@ final class Preferences: ObservableObject {
             Keys.isEnabled: true,
             Keys.blurRadius: 10.0,
             Keys.dimOpacity: 0.4,
-            Keys.shakeToToggle: true,
+            Keys.shakeToToggle: false,
+            Keys.shakeSensitivity: 2.0,
+            Keys.hotkeyEnabled: true,
+            Keys.hotkeyKeyCode: kVK_ANSI_D,
+            Keys.hotkeyModifiers: Int(NSEvent.ModifierFlags([.command, .shift]).rawValue),
+            Keys.hotkeyCharacter: "D",
             Keys.launchAtLogin: false,
         ])
 
@@ -51,6 +95,11 @@ final class Preferences: ObservableObject {
         self.blurRadius = defaults.double(forKey: Keys.blurRadius)
         self.dimOpacity = defaults.double(forKey: Keys.dimOpacity)
         self.shakeToToggle = defaults.bool(forKey: Keys.shakeToToggle)
+        self.shakeSensitivity = defaults.double(forKey: Keys.shakeSensitivity)
+        self.hotkeyEnabled = defaults.bool(forKey: Keys.hotkeyEnabled)
+        self.hotkeyKeyCode = defaults.integer(forKey: Keys.hotkeyKeyCode)
+        self.hotkeyModifiers = defaults.integer(forKey: Keys.hotkeyModifiers)
+        self.hotkeyCharacter = defaults.string(forKey: Keys.hotkeyCharacter) ?? "D"
         self.launchAtLogin = defaults.bool(forKey: Keys.launchAtLogin)
     }
 }

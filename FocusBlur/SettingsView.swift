@@ -5,6 +5,8 @@ import Combine
 struct SettingsView: View {
     @ObservedObject private var prefs = Preferences.shared
     @State private var accessibilityGranted = AXIsProcessTrusted()
+    @State private var isRecordingHotkey = false
+    @State private var hotkeyMonitor: Any?
 
     // Re-check accessibility every second while the popover is open
     private let accessibilityTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -71,9 +73,26 @@ struct SettingsView: View {
 
             Divider()
 
-            // Shake to toggle
-            Toggle("Shake cursor to toggle", isOn: $prefs.shakeToToggle)
-                .font(.subheadline)
+            // Global hotkey
+            HStack {
+                Toggle("Keyboard shortcut", isOn: $prefs.hotkeyEnabled)
+                    .font(.subheadline)
+                Spacer()
+                Button(action: { startRecording() }) {
+                    Text(isRecordingHotkey ? "Press shortcut…" : prefs.hotkeyLabel)
+                        .font(.subheadline.monospaced())
+                        .foregroundColor(isRecordingHotkey ? .accentColor : .secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(isRecordingHotkey ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.15))
+                        .cornerRadius(4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(isRecordingHotkey ? Color.accentColor : Color.clear, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
 
             // Launch at login
             Toggle("Launch at login", isOn: $prefs.launchAtLogin)
@@ -94,6 +113,47 @@ struct SettingsView: View {
         .frame(width: 280)
         .onReceive(accessibilityTimer) { _ in
             accessibilityGranted = AXIsProcessTrusted()
+        }
+        .onDisappear {
+            stopRecording()
+        }
+    }
+
+    // MARK: - Hotkey recording
+
+    private func startRecording() {
+        guard !isRecordingHotkey else { return }
+        isRecordingHotkey = true
+
+        hotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+            // Escape cancels recording
+            if event.keyCode == 53 {
+                stopRecording()
+                return nil
+            }
+
+            // Require at least one modifier (⌘, ⌥, ⌃, or ⇧)
+            let hasModifier = !mods.intersection([.command, .option, .control, .shift]).isEmpty
+            guard hasModifier else { return nil }
+
+            // Save the new hotkey
+            let character = event.charactersIgnoringModifiers ?? ""
+            prefs.hotkeyKeyCode = Int(event.keyCode)
+            prefs.hotkeyModifiers = Int(mods.rawValue)
+            prefs.hotkeyCharacter = character
+
+            stopRecording()
+            return nil // consume the event
+        }
+    }
+
+    private func stopRecording() {
+        isRecordingHotkey = false
+        if let monitor = hotkeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            hotkeyMonitor = nil
         }
     }
 }
